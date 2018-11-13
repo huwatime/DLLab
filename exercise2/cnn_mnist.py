@@ -7,6 +7,7 @@ import os
 import pickle
 
 import numpy as np
+import tensorflow as tf
 
 
 def one_hot(labels):
@@ -60,15 +61,108 @@ def mnist(datasets_dir='./data'):
     return train_x, one_hot(train_y), valid_x, one_hot(valid_y), test_x, one_hot(test_y)
 
 
-def train_and_validate(x_train, y_train, x_valid, y_valid, num_epochs, lr, num_filters, batch_size, filter_size):
-    # TODO: train and validate your convolutional neural networks with the provided data and hyperparameters
+def model_fn(features, labels, mode, params):
+    '''
+    The model_fn is a parameter needed for tf.estimator.Estimator.
+    It is a function that define the deep Learning model (its layout and output), as well as
+    how to train it (the loss function and the optimizer).
+    It returns a EstimatorSpec which is able to handle different modes (TRAIN | EVAL | PREDICT).
+    '''
+    # Layer 1: Conv (ReLU) + Pooling (2x2)
+    conv1 = tf.layers.conv2d(
+            inputs=features['x'],
+            filters=params.num_filters,
+            kernel_size=[params.filter_size, params.filter_size],
+            padding="same",
+            activation=tf.nn.relu)
+    pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
 
-    return learning_curve, model  # TODO: Return the validation error after each epoch (i.e learning curve) and your model
+    # Layer 2: Conv (ReLU) + Pooling (2x2)
+    conv2 = tf.layers.conv2d(
+            inputs=pool1,
+            filters=params.num_filters,
+            kernel_size=[params.filter_size, params.filter_size],
+            padding="same",
+            activation=tf.nn.relu)
+    pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
+
+    # Layer 3: Dense (128 units)
+    shape = pool2.get_shape().as_list()
+    pool2_flat = tf.reshape(pool2, [-1, shape[1] * shape[2] * shape[3]])
+    dense = tf.layers.dense(inputs=pool2_flat, units=128)
+
+    # Output Layer
+    y_hat = tf.layers.dense(inputs=dense, units=10)
+    y_hat_label = tf.argmax(y_hat, axis=1)
+
+    # Loss (Cross-Entropy), Optimizer (SGD)
+    labels=tf.argmax(labels, axis=1)
+    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=y_hat)
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=params.lr)
+    train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+    eval_metric_ops = {
+      "accuracy": tf.metrics.accuracy(labels=labels, predictions=y_hat_label)}
+
+    return tf.estimator.EstimatorSpec(
+            mode,
+            predictions=y_hat_label,         # for mode = PREDICT
+            loss=loss,                       # for mode = TRAIN, EVAL
+            train_op=train_op,               # for mode = TRAIN
+            eval_metric_ops=eval_metric_ops) # for mode = EVAL
+
+
+def train_and_validate(x_train, y_train, x_valid, y_valid, num_epochs, lr, num_filters, batch_size, filter_size):
+    '''
+    A function to train and evaluate the CNN with given parameters.
+    The final model and the evaluation errors during each epoch of training are returned.
+    '''
+    params = tf.contrib.training.HParams(
+            lr=lr,
+            num_filters=num_filters,
+            filter_size=filter_size)
+    model = tf.estimator.Estimator(model_fn, params=params)
+
+    train_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={'x':x_train},
+            y=y_train,
+            batch_size=batch_size,
+            num_epochs=None,
+            shuffle=True)
+    eval_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={'x':x_valid},
+            y=y_valid,
+            num_epochs=1,
+            shuffle=False)
+
+    # Make the number of steps per training to be number of training data / batch_size,
+    # so that in each training epoch, the entire training data would be seen once.
+    num_steps = np.ceil(x_train.shape[0] / batch_size)
+    learning_curve = np.zeros(num_epochs)
+
+    # Loop the number of epochs here so that we can record the evaluation loss for each epoch.
+    for e in range(num_epochs):
+        model.train(input_fn=train_input_fn, steps=num_steps)
+        eval_results = model.evaluate(input_fn=eval_input_fn)
+        learning_curve[e] = eval_results['loss']
+
+    return learning_curve.tolist(), model
 
 
 def test(x_test, y_test, model):
-    # TODO: test your network here by evaluating it on the test data
-    return test_error
+    '''
+    Use the given trained model to test on the test data and return the test error.
+    '''
+    test_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={'x':x_test},
+            y=y_test,
+            num_epochs=1,
+            shuffle=False)
+
+    # Since we need to return the test error, use evaluate instead of predict.
+    test_results = model.evaluate(input_fn=test_input_fn)
+    print("Test Accuracy:", test_results['accuracy'])
+
+    return float(test_results['loss'])
 
 
 if __name__ == "__main__":

@@ -7,10 +7,13 @@ import hpbandster.core.nameserver as hpns
 from hpbandster.optimizers import RandomSearch
 
 import ConfigSpace as CS
+import ConfigSpace.hyperparameters as CSH
 from hpbandster.core.worker import Worker
 import argparse
 
-from cnn_mnist_solution import mnist
+from cnn_mnist import mnist
+from cnn_mnist import train_and_validate
+from cnn_mnist import test
 
 
 class MyWorker(Worker):
@@ -38,11 +41,14 @@ class MyWorker(Worker):
 
         epochs = budget
 
-        # TODO: train and validate your convolutional neural networks here
+        # train and validate your convolutional neural networks here
+        res = train_and_validate(
+                self.x_train, self.y_train, self.x_valid, self.y_valid,
+                epochs, lr, num_filters, batch_size, filter_size)
 
-        # TODO: We minimize so make sure you return the validation error here
+        # We minimize so make sure you return the validation error here
         return ({
-            'loss': validation_error,  # this is the a mandatory field to run hyperband
+            'loss': res[0][-1], # validation_error, this is the a mandatory field to run hyperband
             'info': {}  # can be used for any user-defined information - also mandatory
         })
 
@@ -50,7 +56,15 @@ class MyWorker(Worker):
     def get_configspace():
         config_space = CS.ConfigurationSpace()
 
-        # TODO: Implement configuration space here. See https://github.com/automl/HpBandSter/blob/master/hpbandster/examples/example_5_keras_worker.py  for an example
+        # Implement configuration space here.
+        # See https://github.com/automl/HpBandSter/blob/master/hpbandster/examples/example_5_keras_worker.py for an example
+
+        lr = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-4, upper=1e-1, default_value='1e-3', log=True)
+        batch_size = CSH.UniformIntegerHyperparameter('batch_size', lower=16, upper=128, default_value=128, log=True)
+        num_filters = CSH.UniformIntegerHyperparameter('num_filters', lower=8, upper=64, default_value=32, log=True)
+        filter_size = CSH.CategoricalHyperparameter('filter_size', [3, 4, 5])
+
+        config_space.add_hyperparameters([lr, batch_size, num_filters, filter_size])
 
         return config_space
 
@@ -99,8 +113,9 @@ NS.shutdown()
 # Here we simply print out the best config and some statistics about the performed runs.
 id2config = res.get_id2config_mapping()
 incumbent = res.get_incumbent_id()
+best_conf = id2config[incumbent]['config']
 
-print('Best found configuration:', id2config[incumbent]['config'])
+print('Best found configuration:', best_conf)
 
 
 # Plots the performance of the best found validation error over time
@@ -113,4 +128,9 @@ hpvis.losses_over_time(all_runs)
 import matplotlib.pyplot as plt
 plt.savefig("random_search.png")
 
-# TODO: retrain the best configuration (called incumbent) and compute the test error
+# retrain the best configuration (called incumbent) and compute the test error
+learning_curve, model = train_and_validate(
+        w.x_train, w.y_train, w.x_valid, w.y_valid, 12,
+        best_conf['learning_rate'], best_conf['num_filters'], best_conf['batch_size'], best_conf['filter_size'])
+test_error = test(w.x_test, w.y_test, model)
+print("Test error using best configurations:", test_error)
