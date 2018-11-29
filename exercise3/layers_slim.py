@@ -50,6 +50,7 @@ def batch_activ_conv(current, in_features, out_features, kernel_size, is_trainin
 def Convolution(current, out_features, kernel_size, name):
   current2 = tf.nn.elu(current)
   current_out = slim.conv2d(current2, out_features, [kernel_size, kernel_size], scope=name)
+  current_out = tf.nn.elu(current_out)
 
   return current_out
 
@@ -74,8 +75,9 @@ def TransitionUp_elu(input, filters, strideN,  name):
   current = input
   #print(name)
   #output_shape = [1, 75, 75, 128]
-  upconv = slim.conv2d_transpose(current, filters, [3, 3], stride=strideN,  scope=name)
-  upconv = tf.nn.relu(upconv)
+  # use a kernel that can cover the upsample rate
+  upconv = slim.conv2d_transpose(current, filters, strideN+1, stride=strideN,  scope=name)
+  upconv = tf.nn.elu(upconv)
   #print(upconv)
   return upconv
 
